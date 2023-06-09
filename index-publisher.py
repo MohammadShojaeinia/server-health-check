@@ -1,16 +1,17 @@
 import os
-import pymongo
 from time import sleep
 from datetime import datetime
+import redis
+import json
 
-client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client.database
-healthmonitor = db.healthmonitor
+
+r = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+
 
 INTERVAL = 300
-SERVER_NAME = "shoja-server"
+SERVER_NAME = "shoja-server-publisher"
 SERVER_IP = "X.X.X.X"
-RELATED_SERVICES = ["elasticsearch"]
+RELATED_SERVICES = ["nginx"]
 
 
 def get_service_status(service_name):
@@ -19,7 +20,8 @@ def get_service_status(service_name):
             service_name = "java"
 
         processes = list(
-            map(lambda x: x[:-1], os.popen("ps -ef | awk '{print $8}'").readlines())
+            map(lambda x: x[:-1],
+                os.popen("ps -ef | awk '{print $8}'").readlines())
         )
         result = list(set([x for x in processes if x == service_name]))
 
@@ -29,7 +31,7 @@ def get_service_status(service_name):
 
 
 def check_health():
-    current_date_time = datetime.now()
+    current_date_time = datetime.now().__str__()
     RELATED_SERVICES_STATUS = []
 
     # CPU usage
@@ -53,7 +55,8 @@ def check_health():
     # Disk usage
     total_disk, used_disk, free_disk, used_disk_percentage = map(
         float,
-        list(map(lambda x: x[:-1], (os.popen("df -h").readlines()[3].split()[1:-1]))),
+        list(
+            map(lambda x: x[:-1], (os.popen("df -h").readlines()[3].split()[1:-1]))),
     )
     free_disk_percentage = round(100 - used_disk_percentage, 2)
 
@@ -72,20 +75,23 @@ def check_health():
             }
         )
 
-    healthmonitor.insert_one(
-        {
-            "date": current_date_time,
-            "serverName": SERVER_NAME,
-            "serverIP": SERVER_IP,
-            "CPUUsagePercentage": cpu_usage,
-            "RAMUsagePercentage": used_memory_percentage,
-            "freeRAM": free_memory,
-            "diskUsagePercentage": used_disk_percentage,
-            "freeDisk": free_disk,
-            "freeDiskPercentage": free_disk_percentage,
-            "serverUptime": server_uptime,
-            "relatedServices": RELATED_SERVICES_STATUS,
-        }
+    r.publish(
+        "health-monitor",
+        json.dumps(
+            {
+                "date": current_date_time,
+                "serverName": SERVER_NAME,
+                "serverIP": SERVER_IP,
+                "CPUUsagePercentage": cpu_usage,
+                "RAMUsagePercentage": used_memory_percentage,
+                "freeRAM": free_memory,
+                "diskUsagePercentage": used_disk_percentage,
+                "freeDisk": free_disk,
+                "freeDiskPercentage": free_disk_percentage,
+                "serverUptime": server_uptime,
+                "relatedServices": RELATED_SERVICES_STATUS,
+            }
+        ),
     )
 
 
